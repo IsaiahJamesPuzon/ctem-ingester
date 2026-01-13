@@ -4,6 +4,9 @@ sqlalchemy==2.0.35
 duckdb==1.1.3
 duckdb-engine==0.17.0
 
+# PostgreSQL support (optional - only needed if using DATABASE_URL with PostgreSQL)
+psycopg2-binary==2.9.10
+
 # Security
 defusedxml==0.7.1
 

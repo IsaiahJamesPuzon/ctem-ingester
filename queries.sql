@@ -35,7 +35,7 @@ ORDER BY exposure_count DESC;
 
 -- New exposures trend (daily)
 SELECT 
-    DATE(timestamp) as detection_date,
+    CAST(timestamp AS DATE) as detection_date,
     office_id,
     COUNT(*) as new_exposures,
     COUNT(DISTINCT exposure_id) as unique_exposures,
@@ -44,7 +44,7 @@ SELECT
 FROM exposure_events
 WHERE event_action = 'exposure_opened'
     AND timestamp >= CURRENT_TIMESTAMP - INTERVAL '90 days'
-GROUP BY DATE(timestamp), office_id
+GROUP BY CAST(timestamp AS DATE), office_id
 ORDER BY detection_date DESC, office_id;
 
 

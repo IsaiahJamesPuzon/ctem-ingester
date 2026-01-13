@@ -16,6 +16,10 @@ python ingest.py /path/to/scan.xml --office-id=office-1 --scanner-id=scanner-1 -
 
 # Nuclei JSON support
 python ingest.py /path/to/nuclei.json --office-id=office-1 --scanner-id=scanner-1 --scanner-type=nuclei
+
+# Use PostgreSQL instead of DuckDB
+export DATABASE_URL=postgresql://user:password@localhost:5432/exposures
+python ingest.py /path/to/scan.xml --office-id=office-1 --scanner-id=scanner-1
 ```
 
 ## Usage
@@ -103,18 +107,21 @@ docker exec ctem-ingestion python ingest.py \
 
 ## Minimal Dependencies
 
-**Only 6 core packages:**
+**Core packages (7 total):**
 
 ```txt
 pydantic==2.9.2          # Data validation
 sqlalchemy==2.0.35       # ORM
-duckdb==1.1.3            # Database
-duckdb-engine==0.17.0    # SQLAlchemy dialect
+duckdb==1.1.3            # Database (default)
+duckdb-engine==0.17.0    # SQLAlchemy dialect for DuckDB
+psycopg2-binary==2.9.10  # PostgreSQL adapter (optional, only if using DATABASE_URL)
 defusedxml==0.7.1        # Secure XML parsing
 uuid-utils==0.9.0        # UUIDv7 ID generation
 ```
 
 No web frameworks, no async, no heavyweight dependencies. Just pure Python processing.
+
+**Note**: If you only use DuckDB, you can skip `psycopg2-binary`. If you only use PostgreSQL, you can skip `duckdb` and `duckdb-engine`.
 
 ## Project Structure
 
@@ -189,6 +196,8 @@ python ingest.py scan.json --scanner-type=masscan --office-id=office-1 --scanner
 
 ### Environment Variables
 
+#### DuckDB (Default - File-based)
+
 ```bash
 # Local development (default)
 DB_PATH=./data/exposures.duckdb
@@ -196,6 +205,27 @@ DB_PATH=./data/exposures.duckdb
 # Docker deployment
 DB_PATH=/app/data/exposures.duckdb
 ```
+
+#### PostgreSQL (Optional - via DATABASE_URL)
+
+To use PostgreSQL instead of DuckDB, set the `DATABASE_URL` environment variable:
+
+```bash
+# PostgreSQL connection string
+DATABASE_URL=postgresql://username:password@localhost:5432/exposures_db
+
+# Examples:
+# Local PostgreSQL
+DATABASE_URL=postgresql://postgres:password@localhost:5432/exposures
+
+# Remote PostgreSQL
+DATABASE_URL=postgresql://user:secret@db.example.com:5432/ctem_db
+
+# PostgreSQL with SSL
+DATABASE_URL=postgresql://user:pass@host:5432/db?sslmode=require
+```
+
+**Note**: When `DATABASE_URL` is set, it takes precedence over `DB_PATH`. The database tables will be automatically created on first run regardless of the database type.
 
 ### Database Schema
 
@@ -237,6 +267,8 @@ docker run -v /path/to/data:/app/data \
 
 ### With Docker Compose
 
+#### Option 1: DuckDB (File-based)
+
 ```yaml
 services:
   ingestion:
@@ -255,6 +287,44 @@ services:
 volumes:
   scan_data:
   duckdb_data:
+
+networks:
+  ctem-network:
+```
+
+#### Option 2: PostgreSQL
+
+```yaml
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ctem-postgres
+    environment:
+      - POSTGRES_DB=exposures
+      - POSTGRES_USER=ctem
+      - POSTGRES_PASSWORD=secure_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ctem-network
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: ctem-ingestion
+    volumes:
+      - scan_data:/data/scans:ro
+    environment:
+      - DATABASE_URL=postgresql://ctem:secure_password@postgres:5432/exposures
+    depends_on:
+      - postgres
+    networks:
+      - ctem-network
+
+volumes:
+  scan_data:
+  postgres_data:
 
 networks:
   ctem-network:

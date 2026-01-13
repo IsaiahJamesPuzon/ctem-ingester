@@ -29,13 +29,22 @@ def get_engine():
     global _engine
     
     if _engine is None:
-        db_path = os.getenv('DB_PATH', './data/exposures.duckdb')
+        # Check for DATABASE_URL first (e.g., postgresql://user:pass@host:port/dbname)
+        database_url = os.getenv('DATABASE_URL')
         
-        # Ensure parent directory exists
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        
-        connection_string = f"duckdb:///{db_path}"
-        _engine = create_engine(connection_string, echo=False)
+        if database_url:
+            # Use provided connection string (PostgreSQL, etc.)
+            connection_string = database_url
+            _engine = create_engine(connection_string, echo=False)
+        else:
+            # Default to DuckDB
+            db_path = os.getenv('DB_PATH', './data/exposures.duckdb')
+            
+            # Ensure parent directory exists
+            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+            
+            connection_string = f"duckdb:///{db_path}"
+            _engine = create_engine(connection_string, echo=False)
     
     return _engine
 
