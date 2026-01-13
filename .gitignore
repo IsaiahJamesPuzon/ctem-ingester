@@ -4,4 +4,3 @@ samples/
 .DS_Store
 ingestion/.DS_Store
 ingestion/__pycache__/
-run_on_all_samples.sh
