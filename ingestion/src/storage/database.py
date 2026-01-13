@@ -5,10 +5,18 @@ Simple database connection management.
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, Integer
 from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.ext.compiler import compiles
 
 from src.models.storage import Base
+
+
+# Fix for DuckDB: prevent SERIAL generation
+@compiles(Integer, 'duckdb')
+def compile_integer_duckdb(type_, compiler, **kw):
+    """Compile INTEGER type for DuckDB (avoid SERIAL)."""
+    return "INTEGER"
 
 
 # Global engine and session factory
@@ -21,7 +29,7 @@ def get_engine():
     global _engine
     
     if _engine is None:
-        db_path = os.getenv('DB_PATH', '/app/data/exposures.duckdb')
+        db_path = os.getenv('DB_PATH', './data/exposures.duckdb')
         
         # Ensure parent directory exists
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)

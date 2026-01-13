@@ -5,9 +5,12 @@ Simple repository for ingesting exposure events.
 from datetime import datetime
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy import insert
+import uuid
 
 from src.models.canonical import ExposureEventModel
-from src.models.storage import ExposureEvent, ExposureCurrent
+from src.models.storage import ExposureEvent, ExposureCurrent, QuarantinedFile
+from src.utils.security import sanitize_payload
 
 
 BATCH_SIZE = 500  # Batch size for inserts
@@ -77,53 +80,8 @@ class ExposureRepository:
         # Convert to current state dicts
         current_dicts = [self._event_model_to_current_dict(event) for event in events]
         
-        # Build upsert statement
-        stmt = insert(ExposureCurrent)
-        
-        # Define update values (what to update on conflict)
-        # IMPORTANT: Preserve first_seen, don't overwrite non-null with null
-        update_values = {
-            'last_seen': stmt.excluded.last_seen,
-            'status': stmt.excluded.status,
-            'severity': stmt.excluded.severity,
-            'event_action': stmt.excluded.event_action,
-            'event_kind': stmt.excluded.event_kind,
-            'updated_at': datetime.utcnow(),
-        }
-        
-        # Conditionally update optional fields (preserve non-null)
-        # Use COALESCE to keep existing value if new value is null
-        optional_fields = [
-            'risk_score', 'confidence',
-            'asset_hostname', 'asset_ip', 'asset_mac', 'asset_os', 'asset_managed',
-            'service_name', 'service_product', 'service_version',
-            'service_tls', 'service_auth', 'service_bind_scope',
-            'service_json', 'resource_json', 'data_class_json',
-            'office_region', 'office_network_zone',
-            'disposition_ticket', 'disposition_owner', 'disposition_sla',
-        ]
-        
-        for field in optional_fields:
-            # Update if new value is not null, otherwise keep existing
-            update_values[field] = stmt.excluded.get(field)
-        
-        # Execute upsert with dialect-specific syntax
-        try:
-            # Try DuckDB/SQLite syntax first (INSERT ... ON CONFLICT)
-            upsert_stmt = stmt.on_conflict_do_update(
-                index_elements=['office_id', 'exposure_id'],
-                set_=update_values
-            )
-            result = self.session.execute(upsert_stmt, current_dicts)
-            
-            # DuckDB doesn't provide rowcount for upserts reliably
-            # Estimate: assume half are updates (conservative)
-            inserted = len(current_dicts) // 2
-            updated = len(current_dicts) - inserted
-            
-        except Exception as e:
-            # Fallback: manual upsert (slower but portable)
-            inserted, updated = self._manual_upsert(current_dicts)
+        # Use manual upsert for DuckDB (native upsert has compatibility issues)
+        inserted, updated = self._manual_upsert(current_dicts)
         
         return {'inserted': inserted, 'updated': updated}
     
@@ -161,7 +119,8 @@ class ExposureRepository:
                 
                 updated += 1
             else:
-                # Insert new
+                # Insert new (generate UUID for id)
+                data['id'] = str(uuid.uuid4())
                 new_exposure = ExposureCurrent(**data)
                 self.session.add(new_exposure)
                 inserted += 1
@@ -196,11 +155,11 @@ class ExposureRepository:
                 if event.exposure.vector.network_direction else None
             ),
             'service_json': (
-                event.exposure.service.model_dump(mode='json')
+                event.exposure.service.model_dump(mode='json', by_alias=True)
                 if event.exposure.service else None
             ),
             'resource_json': (
-                event.exposure.resource.model_dump(mode='json')
+                event.exposure.resource.model_dump(mode='json', by_alias=True)
                 if event.exposure.resource else None
             ),
             'scanner_id': event.scanner.id,
@@ -259,8 +218,8 @@ class ExposureRepository:
             'service_bind_scope': (
                 service.bind_scope.value if service and service.bind_scope else None
             ),
-            'service_json': service.model_dump(mode='json') if service else None,
-            'resource_json': resource.model_dump(mode='json') if resource else None,
+            'service_json': service.model_dump(mode='json', by_alias=True) if service else None,
+            'resource_json': resource.model_dump(mode='json', by_alias=True) if resource else None,
             'event_action': event.event.action.value,
             'event_kind': event.event.kind.value,
             'scanner_id': event.scanner.id,
@@ -309,6 +268,7 @@ class ExposureRepository:
             office_id: Office ID if known
         """
         quarantined = QuarantinedFile(
+            id=str(uuid.uuid4()),
             filename=filename,
             file_size=file_size,
             file_hash=file_hash,

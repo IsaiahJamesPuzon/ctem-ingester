@@ -3,6 +3,7 @@ Security utilities for safe XML parsing and data sanitization.
 """
 
 import defusedxml.ElementTree as ET
+from xml.etree.ElementTree import Element  # For type hints only
 from typing import Any, Dict
 from pathlib import Path
 
@@ -17,7 +18,7 @@ class XMLSecurityError(Exception):
     pass
 
 
-def parse_xml_safely(file_path: Path | str) -> ET.Element:
+def parse_xml_safely(file_path: Path | str) -> Element:
     """
     Parse XML file safely using defusedxml.
     
@@ -65,7 +66,7 @@ def parse_xml_safely(file_path: Path | str) -> ET.Element:
     return root
 
 
-def parse_xml_string_safely(xml_string: str) -> ET.Element:
+def parse_xml_string_safely(xml_string: str) -> Element:
     """
     Parse XML string safely using defusedxml.
     
@@ -103,7 +104,7 @@ def parse_xml_string_safely(xml_string: str) -> ET.Element:
     return root
 
 
-def _get_xml_depth(element: ET.Element, current_depth: int = 0) -> int:
+def _get_xml_depth(element: Element, current_depth: int = 0) -> int:
     """
     Recursively calculate maximum depth of XML tree.
     

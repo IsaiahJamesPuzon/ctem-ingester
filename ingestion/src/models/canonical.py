@@ -238,7 +238,7 @@ class Resource(BaseModel):
 
 
 class Exposure(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid", populate_by_name=True)
     
     id: str
     class_: ExposureClass = Field(alias="class")
@@ -320,7 +320,7 @@ class ExposureEventModel(BaseModel):
     Root canonical model for an Exposure Event.
     Enforces strict validation matching the JSON schema.
     """
-    model_config = ConfigDict(strict=True, extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid", populate_by_name=True)
     
     schema_version: str
     timestamp: datetime = Field(alias="@timestamp")

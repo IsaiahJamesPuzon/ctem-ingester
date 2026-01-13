@@ -105,9 +105,9 @@ docker exec ctem-ingestion python ingest.py \
 
 ```txt
 pydantic==2.9.2          # Data validation
-sqlalchemy==2.0.35        # ORM
+sqlalchemy==2.0.35       # ORM
 duckdb==1.1.3            # Database
-duckdb-engine==0.13.2    # SQLAlchemy dialect
+duckdb-engine==0.17.0    # SQLAlchemy dialect
 defusedxml==0.7.1        # Secure XML parsing
 uuid-utils==0.9.0        # UUIDv7 ID generation
 ```
@@ -185,22 +185,30 @@ python ingest.py scan.json --scanner-type=masscan --office-id=office-1 --scanner
 ### Environment Variables
 
 ```bash
-DB_PATH=/app/data/exposures.duckdb  # Database file location
+# Local development (default)
+DB_PATH=./data/exposures.duckdb
+
+# Docker deployment
+DB_PATH=/app/data/exposures.duckdb
 ```
 
 ### Database Schema
 
 **exposure_events** (append-only audit log):
-- Primary key: `event_id`
+- Primary key: `event_id` (String, UUID)
 - Stores: timestamps, office_id, asset_id, exposure_id, severity, network details, full payload
 - Purpose: Time series, audit trail
+- Never deleted, grows indefinitely
 
 **exposures_current** (upserted state):
+- Primary key: `id` (String, UUID - auto-generated)
 - Unique key: `(office_id, exposure_id)`
 - Stores: latest status, first_seen, last_seen, severity, asset details, service info
 - Purpose: Fast queries for dashboards
+- Smart upsert: preserves first_seen and non-null fields
 
 **quarantined_files**:
+- Primary key: `id` (String, UUID - auto-generated)
 - Tracks failed processing attempts with error details
 
 ## Docker Deployment

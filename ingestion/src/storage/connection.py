@@ -18,7 +18,7 @@ class DatabaseConfig:
     
     def __init__(self):
         self.db_type = os.getenv('DB_TYPE', 'duckdb')
-        self.db_path = os.getenv('DB_PATH', '/app/data/exposures.duckdb')
+        self.db_path = os.getenv('DB_PATH', './data/exposures.duckdb')
         self.db_url = os.getenv('DATABASE_URL', '')
         
         # Connection pool settings

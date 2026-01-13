@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 import defusedxml.ElementTree as ET
+from xml.etree.ElementTree import Element  # For type hints only
 
 from src.models.canonical import (
     ExposureEventModel, Event, Office, Scanner, Target, Asset,
@@ -23,6 +24,10 @@ class NmapTransformer(BaseTransformer):
     
     def __init__(self, schema_version: str = "1.0.0"):
         self.schema_version = schema_version
+    
+    def get_scanner_type(self) -> str:
+        """Return the scanner type identifier."""
+        return "nmap"
     
     def transform(
         self,
@@ -82,7 +87,7 @@ class NmapTransformer(BaseTransformer):
     
     def _process_host(
         self,
-        host_elem: ET.Element,
+        host_elem: Element,
         office_id: str,
         scanner_id: str,
         scanner_version: str,
@@ -130,7 +135,7 @@ class NmapTransformer(BaseTransformer):
         
         return events
     
-    def _extract_addresses(self, host_elem: ET.Element) -> dict:
+    def _extract_addresses(self, host_elem: Element) -> dict:
         """Extract IP and MAC addresses from host element."""
         addresses = {}
         
@@ -149,7 +154,7 @@ class NmapTransformer(BaseTransformer):
     
     def _create_port_event(
         self,
-        port_elem: ET.Element,
+        port_elem: Element,
         asset: Asset,
         office_id: str,
         scanner_id: str,

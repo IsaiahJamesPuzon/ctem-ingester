@@ -78,8 +78,9 @@ class ExposureCurrent(Base):
     """
     __tablename__ = "exposures_current"
     
-    # Auto-increment primary key
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    # Primary key (using String to avoid SERIAL issues with DuckDB)
+    # Auto-increment handled by using ULIDs or UUIDs at application level
+    id = Column(String, primary_key=True)
     
     # Unique business key
     office_id = Column(String, nullable=False)
@@ -167,7 +168,8 @@ class QuarantinedFile(Base):
     """
     __tablename__ = "quarantined_files"
     
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    # Primary key (using String to avoid SERIAL issues with DuckDB)
+    id = Column(String, primary_key=True)
     
     # File details
     filename = Column(String, nullable=False)
