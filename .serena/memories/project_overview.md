@@ -8,7 +8,7 @@ Minimal Python CLI script that processes network scan outputs (nmap XML), valida
 n8n Execute Command → python ingest.py /path/to/scan.xml → Parse → Validate → Transform → Store in DuckDB
 ```
 
-**Key principle**: Single Python CLI script, no web frameworks, no daemons, just on-demand processing.
+**Key principle**: Single Python CLI script, no web frameworks, no daemons, no file watchers - just on-demand processing.
 
 ## Quick Usage
 ```bash
@@ -43,12 +43,12 @@ python ingest.py scan.xml --office-id=office-1 --scanner-id=scanner-1 --json
 
 **Total dependencies: 6 core packages** (no web frameworks, no heavyweight libraries)
 
-## Project Structure (Minimal)
+## Project Structure (Clean & Minimal)
 ```
 ingestion/
 ├── ingest.py                # Main CLI script (~200 lines)
 ├── requirements.txt         # 6 dependencies
-├── data/                    # DuckDB storage (created automatically)
+├── data/                    # DuckDB storage (auto-created)
 │   └── exposures.duckdb
 └── src/
     ├── models/
@@ -67,6 +67,8 @@ ingestion/
         └── security.py      # XML security (defusedxml wrapper)
 ```
 
+**Note**: No HTTP server, no file watcher, no metrics/health endpoints - pure CLI processing.
+
 ## Key Design Principles
 1. **Minimal footprint**: No unnecessary dependencies or frameworks
 2. **Strict validation**: Pydantic v2 with `extra="forbid"`, `strict=True`, `populate_by_name=True`
@@ -76,6 +78,7 @@ ingestion/
 6. **String primary keys**: UUID-based (avoids DuckDB SERIAL compatibility issues)
 7. **Manual upsert**: Find-or-create pattern for maximum compatibility
 8. **Extensible**: Simple BaseTransformer interface for adding new scanners
+9. **CLI-only**: Direct invocation from n8n Execute Command nodes
 
 ## n8n Integration
 Execute Command node:
@@ -100,6 +103,6 @@ Check success: `{{ $json.exitCode === 0 }}`
 - **quarantined_files**: Failed processing log (id String PK)
 
 ## Performance
-- **Typical scan** (70 exposures): ~190ms first run, ~500ms updates
+- **Typical scan** (70 exposures): ~190-200ms first run, ~200-500ms updates
 - **Batch processing**: 500 events/chunk for optimal DuckDB performance
 - **Verification**: 140 events logged, 70 unique exposures maintained on re-run

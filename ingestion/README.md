@@ -118,8 +118,10 @@ No web frameworks, no async, no heavyweight dependencies. Just pure Python proce
 
 ```
 ingestion/
-├── ingest.py                    # Main script (~300 lines)
+├── ingest.py                    # Main CLI script (~200 lines)
 ├── requirements.txt             # 6 dependencies
+├── data/                        # DuckDB storage (auto-created)
+│   └── exposures.duckdb
 └── src/
     ├── models/
     │   ├── canonical.py         # Pydantic validation models
@@ -129,11 +131,12 @@ ingestion/
     │   ├── registry.py          # Simple transformer registry
     │   └── nmap_transformer.py  # nmap XML → canonical
     ├── storage/
-    │   ├── database.py          # Connection management
-    │   └── repository.py        # Batch insert/upsert
+    │   ├── connection.py        # DatabaseManager singleton
+    │   ├── database.py          # Engine/session management
+    │   └── repository.py        # ExposureRepository (upsert logic)
     └── utils/
-        ├── id_generation.py     # Deterministic IDs
-        └── security.py          # XML security
+        ├── id_generation.py     # Deterministic IDs (SHA256 + UUIDv7)
+        └── security.py          # XML security (defusedxml wrapper)
 ```
 
 ## Extensibility: Adding New Scanners
@@ -235,12 +238,24 @@ docker run -v /path/to/data:/app/data \
 ```yaml
 services:
   ingestion:
-    image: ctem-ingestion
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: ctem-ingestion
     volumes:
-      - scan_data:/data/scans:ro
-      - duckdb_data:/app/data
+      - scan_data:/data/scans:ro      # Scan files from n8n
+      - duckdb_data:/app/data         # Shared with Metabase
     environment:
       - DB_PATH=/app/data/exposures.duckdb
+    networks:
+      - ctem-network
+
+volumes:
+  scan_data:
+  duckdb_data:
+
+networks:
+  ctem-network:
 ```
 
 ## Testing
