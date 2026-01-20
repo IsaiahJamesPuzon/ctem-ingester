@@ -20,7 +20,13 @@ class BaseTransformer(ABC):
     """
     
     @abstractmethod
-    def transform(self, file_path: Path, office_id: str, scanner_id: str) -> List[ExposureEventModel]:
+    def transform(
+        self, 
+        file_path: Path, 
+        office_id: str, 
+        scanner_id: str,
+        scan_run_id: str | None = None
+    ) -> List[ExposureEventModel]:
         """
         Transform scanner output to canonical exposure events.
         
@@ -28,6 +34,7 @@ class BaseTransformer(ABC):
             file_path: Path to scanner output file
             office_id: Office identifier
             scanner_id: Scanner instance identifier
+            scan_run_id: Optional scan run identifier for correlation
         
         Returns:
             List of ExposureEventModel instances

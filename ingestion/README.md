@@ -32,6 +32,7 @@ Arguments:
   --office-id            Office identifier (required)
   --scanner-id           Scanner identifier (required)
   --scanner-type         Scanner type: nmap, nuclei (default: nmap)
+  --scan-run-id          Scan run identifier for correlation (default: filename without extension)
   --json                 Output JSON format
   --init-db              Force database initialization (optional, auto-detects by default)
 
@@ -40,7 +41,9 @@ Exit Codes:
   1  Error (file not found, parsing error, validation error)
 ```
 
-**Note**: Database tables are automatically created on first run if they don't exist. No manual initialization required!
+**Note**: 
+- Database tables are automatically created on first run if they don't exist. No manual initialization required!
+- The `--scan-run-id` is automatically derived from the filename if not provided. For example, `host-discovery.xml` → `scan_run_id: "host-discovery"`. This enables correlation of events from the same scan run.
 
 ### JSON Output
 
@@ -245,6 +248,66 @@ DATABASE_URL=postgresql://user:pass@host:5432/db?sslmode=require
 **quarantined_files**:
 - Primary key: `id` (String, UUID - auto-generated)
 - Tracks failed processing attempts with error details
+
+### Scan Run Correlation
+
+The `scan_run_id` field enables tracking and correlating events from the same scan run. This is especially useful for **multi-stage scanning workflows**:
+
+**Example: Multi-Stage Nmap Scanning**
+```bash
+# Stage 1: Host discovery
+nmap -sn 192.168.1.0/24 -oX host-discovery.xml
+python3 ingest.py host-discovery.xml --office-id=office-1 --scanner-id=nmap
+# scan_run_id automatically set to "host-discovery"
+
+# Stage 2: Port scan (on discovered hosts)
+nmap -p- 192.168.1.0/24 -oX port-scan.xml
+python3 ingest.py port-scan.xml --office-id=office-1 --scanner-id=nmap
+# scan_run_id automatically set to "port-scan"
+
+# Stage 3: Service detection
+nmap -sV -p 22,80,443 192.168.1.0/24 -oX service-detect.xml
+python3 ingest.py service-detect.xml --office-id=office-1 --scanner-id=nmap
+# scan_run_id automatically set to "service-detect"
+```
+
+**Benefits:**
+- Track which scan stage discovered each exposure
+- Correlate events from the same scanning session
+- Debug scanning workflow issues
+- Analyze scan coverage across stages
+
+**Custom Scan Run IDs:**
+```bash
+# Use explicit scan run ID
+python3 ingest.py scan.xml --office-id=office-1 --scanner-id=nmap \
+  --scan-run-id="weekly-scan-2026-01-20"
+
+# Query events by scan run:
+SELECT * FROM exposure_events WHERE scan_run_id = 'port-scan';
+```
+
+### Asset Identification Strategy
+
+The system uses **MAC address as the primary asset identifier** when available, with IP address as a fallback:
+
+**Nmap Scans**:
+- When MAC address is captured (local network scans with sufficient privileges) → `asset_id = MAC address`
+- When MAC address is not available (remote scans, insufficient privileges) → `asset_id = IP address`
+- MAC address is always stored in the database when available (in `asset_mac` column)
+
+**Nuclei Scans**:
+- Always use IP address as `asset_id` (Nuclei doesn't provide MAC addresses)
+
+**Benefits of MAC-based identification**:
+- More stable identifier for tracking assets over time (IPs can change with DHCP)
+- Better correlation of exposures to physical devices
+- Improved asset inventory accuracy
+
+**Note**: The `exposure_id` is a deterministic SHA256 hash based on:
+`office_id | asset_id | dst_ip | dst_port | protocol | exposure_class`
+
+This means exposures are tracked per unique combination of these factors, enabling proper deduplication and lifecycle tracking across multiple scans.
 
 ## Docker Deployment
 

@@ -87,20 +87,46 @@ class ExposureRepository:
     
     def _manual_upsert(self, current_dicts: List[Dict[str, Any]]) -> tuple[int, int]:
         """
-        Manual upsert fallback for databases without native upsert.
+        Optimized manual upsert with bulk fetching.
+        
+        Performance improvement: Fetches all existing records in one query
+        instead of querying per record (N queries → 1 query).
         
         Returns:
             (inserted_count, updated_count)
         """
+        if not current_dicts:
+            return (0, 0)
+        
         inserted = 0
         updated = 0
         
+        # Step 1: Bulk fetch all potentially existing records in a single query
+        # Build list of (office_id, exposure_id) tuples to check
+        keys_to_check = [(d['office_id'], d['exposure_id']) for d in current_dicts]
+        
+        # Query all existing records that match any of our keys
+        from sqlalchemy import or_, and_
+        conditions = [
+            and_(
+                ExposureCurrent.office_id == office_id,
+                ExposureCurrent.exposure_id == exposure_id
+            )
+            for office_id, exposure_id in keys_to_check
+        ]
+        
+        existing_records = self.session.query(ExposureCurrent).filter(or_(*conditions)).all()
+        
+        # Step 2: Create lookup dictionary for O(1) access
+        existing_map = {
+            (rec.office_id, rec.exposure_id): rec
+            for rec in existing_records
+        }
+        
+        # Step 3: Process each record (update existing or insert new)
         for data in current_dicts:
-            # Check if exists
-            existing = self.session.query(ExposureCurrent).filter_by(
-                office_id=data['office_id'],
-                exposure_id=data['exposure_id']
-            ).first()
+            key = (data['office_id'], data['exposure_id'])
+            existing = existing_map.get(key)
             
             if existing:
                 # Update existing (preserve first_seen and non-null fields)
@@ -112,10 +138,10 @@ class ExposureRepository:
                 existing.updated_at = datetime.utcnow()
                 
                 # Update optional fields only if new value is not None
-                for key, value in data.items():
-                    if key not in ['office_id', 'exposure_id', 'first_seen', 'created_at']:
+                for key_name, value in data.items():
+                    if key_name not in ['office_id', 'exposure_id', 'first_seen', 'created_at']:
                         if value is not None:
-                            setattr(existing, key, value)
+                            setattr(existing, key_name, value)
                 
                 updated += 1
             else:
@@ -132,6 +158,10 @@ class ExposureRepository:
         # Sanitize payload before storage
         payload_dict = event.model_dump(mode='json', by_alias=True)
         sanitized = sanitize_payload(payload_dict)
+        
+        # Inject aggregation metadata if present (from deduplication)
+        if hasattr(event, '_ctem_aggregation'):
+            sanitized['_ctem_aggregation'] = event._ctem_aggregation
         
         return {
             'event_id': event.event.id,
@@ -218,7 +248,10 @@ class ExposureRepository:
             'service_bind_scope': (
                 service.bind_scope.value if service and service.bind_scope else None
             ),
-            'service_json': service.model_dump(mode='json', by_alias=True) if service else None,
+            'service_json': (
+                self._add_aggregation_to_service_json(event, service)
+                if service else None
+            ),
             'resource_json': resource.model_dump(mode='json', by_alias=True) if resource else None,
             'event_action': event.event.action.value,
             'event_kind': event.event.kind.value,
@@ -242,6 +275,29 @@ class ExposureRepository:
             ),
             'created_at': datetime.utcnow(),
         }
+
+    def _add_aggregation_to_service_json(
+        self, 
+        event: ExposureEventModel, 
+        service
+    ) -> Dict[str, Any]:
+        """
+        Add aggregation metadata to service JSON if present.
+        
+        Args:
+            event: The exposure event model
+            service: The service model
+            
+        Returns:
+            Service dict with optional aggregation metadata
+        """
+        service_dict = service.model_dump(mode='json', by_alias=True)
+        
+        # Inject aggregation metadata if present (from deduplication)
+        if hasattr(event, '_ctem_aggregation'):
+            service_dict['_aggregation'] = event._ctem_aggregation
+        
+        return service_dict
     
     def quarantine_file(
         self,

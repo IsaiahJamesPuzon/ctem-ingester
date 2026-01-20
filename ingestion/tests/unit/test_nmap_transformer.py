@@ -57,7 +57,7 @@ def test_parse_valid_nmap_xml(transformer, sample_nmap_xml):
         temp_path = Path(f.name)
     
     try:
-        events = transformer.transform_file(
+        events = transformer.transform(
             file_path=temp_path,
             office_id="office-1",
             scanner_id="scanner-1"
@@ -230,13 +230,13 @@ def test_deterministic_exposure_ids(transformer, sample_nmap_xml):
         temp_path = Path(f.name)
     
     try:
-        events1 = transformer.transform_file(
+        events1 = transformer.transform(
             file_path=temp_path,
             office_id="office-1",
             scanner_id="scanner-1"
         )
         
-        events2 = transformer.transform_file(
+        events2 = transformer.transform(
             file_path=temp_path,
             office_id="office-1",
             scanner_id="scanner-1"
@@ -259,7 +259,7 @@ def test_reject_invalid_xml(transformer):
     
     try:
         with pytest.raises(TransformerError):
-            transformer.transform_file(
+            transformer.transform(
                 file_path=temp_path,
                 office_id="office-1",
                 scanner_id="scanner-1"
@@ -281,7 +281,7 @@ def test_reject_non_nmap_xml(transformer):
     
     try:
         with pytest.raises(TransformerError) as exc_info:
-            transformer.transform_file(
+            transformer.transform(
                 file_path=temp_path,
                 office_id="office-1",
                 scanner_id="scanner-1"
@@ -315,7 +315,7 @@ def test_handle_closed_ports(transformer):
         temp_path = Path(f.name)
     
     try:
-        events = transformer.transform_file(
+        events = transformer.transform(
             file_path=temp_path,
             office_id="office-1",
             scanner_id="scanner-1"
@@ -325,5 +325,148 @@ def test_handle_closed_ports(transformer):
         assert len(events) == 1
         assert events[0].exposure.vector.dst.port == 22
         
+    finally:
+        temp_path.unlink()
+
+
+
+def test_asset_id_uses_mac_when_available(transformer):
+    """Test that MAC address is used as asset_id when available."""
+    nmap_with_mac = """<?xml version="1.0"?>
+<nmaprun scanner="nmap" start="1705147200">
+    <host>
+        <address addr="192.168.1.100" addrtype="ipv4"/>
+        <address addr="00:11:22:33:44:55" addrtype="mac"/>
+        <ports>
+            <port protocol="tcp" portid="22">
+                <state state="open"/>
+                <service name="ssh"/>
+            </port>
+        </ports>
+    </host>
+</nmaprun>"""
+    
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.xml') as f:
+        f.write(nmap_with_mac)
+        temp_path = Path(f.name)
+    
+    try:
+        events = transformer.transform(
+            file_path=temp_path,
+            office_id="office-1",
+            scanner_id="scanner-1"
+        )
+        
+        # Asset ID should be MAC address
+        assert events[0].target.asset.id == "00:11:22:33:44:55"
+        assert events[0].target.asset.mac == "00:11:22:33:44:55"
+        assert events[0].target.asset.ip == ["192.168.1.100"]
+        
+    finally:
+        temp_path.unlink()
+
+
+def test_asset_id_fallback_to_ip_when_no_mac(transformer):
+    """Test that IP address is used as asset_id when MAC is not available."""
+    nmap_without_mac = """<?xml version="1.0"?>
+<nmaprun scanner="nmap" start="1705147200">
+    <host>
+        <address addr="192.168.1.100" addrtype="ipv4"/>
+        <ports>
+            <port protocol="tcp" portid="22">
+                <state state="open"/>
+                <service name="ssh"/>
+            </port>
+        </ports>
+    </host>
+</nmaprun>"""
+    
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.xml') as f:
+        f.write(nmap_without_mac)
+        temp_path = Path(f.name)
+    
+    try:
+        events = transformer.transform(
+            file_path=temp_path,
+            office_id="office-1",
+            scanner_id="scanner-1"
+        )
+        
+        # Asset ID should fall back to IP address
+        assert events[0].target.asset.id == "192.168.1.100"
+        assert events[0].target.asset.mac is None
+        assert events[0].target.asset.ip == ["192.168.1.100"]
+        
+    finally:
+        temp_path.unlink()
+
+
+def test_mac_address_stored_in_database_format(transformer, sample_nmap_xml):
+    """Test that MAC address is properly captured for database storage."""
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.xml') as f:
+        f.write(sample_nmap_xml)
+        temp_path = Path(f.name)
+    
+    try:
+        events = transformer.transform(
+            file_path=temp_path,
+            office_id="office-1",
+            scanner_id="scanner-1"
+        )
+        
+        # Verify all events have the same asset with MAC
+        for event in events:
+            assert event.target.asset.id == "00:11:22:33:44:55"
+            assert event.target.asset.mac == "00:11:22:33:44:55"
+            assert event.target.asset.ip == ["192.168.1.100"]
+            
+    finally:
+        temp_path.unlink()
+
+
+def test_scan_run_id_is_stored(transformer, sample_nmap_xml):
+    """Test that scan_run_id is properly captured for correlation."""
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.xml') as f:
+        f.write(sample_nmap_xml)
+        temp_path = Path(f.name)
+    
+    try:
+        events = transformer.transform(
+            file_path=temp_path,
+            office_id="office-1",
+            scanner_id="scanner-1",
+            scan_run_id="scan-123-port-scan"
+        )
+        
+        # Verify all events have the scan_run_id
+        assert len(events) > 0
+        for event in events:
+            assert event.event.correlation is not None
+            assert event.event.correlation.scan_run_id == "scan-123-port-scan"
+            
+    finally:
+        temp_path.unlink()
+
+
+def test_scan_run_id_is_optional(transformer, sample_nmap_xml):
+    """Test that scan_run_id is optional and works when None."""
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.xml') as f:
+        f.write(sample_nmap_xml)
+        temp_path = Path(f.name)
+    
+    try:
+        events = transformer.transform(
+            file_path=temp_path,
+            office_id="office-1",
+            scanner_id="scanner-1"
+            # scan_run_id not provided
+        )
+        
+        # Should still work without scan_run_id
+        assert len(events) > 0
+        for event in events:
+            assert event.event.correlation is not None
+            assert event.event.correlation.scan_run_id is None
+            
     finally:
         temp_path.unlink()

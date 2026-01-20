@@ -34,6 +34,10 @@ class ExposureClass(str, Enum):
     DEBUG_PORT_EXPOSED = "debug_port_exposed"
     SERVICE_ADVERTISED_MDNS = "service_advertised_mdns"
     EGRESS_TUNNEL_INDICATOR = "egress_tunnel_indicator"
+    MEDIA_STREAMING_EXPOSED = "media_streaming_exposed"
+    MONITORING_EXPOSED = "monitoring_exposed"
+    CACHE_EXPOSED = "cache_exposed"
+    QUEUE_EXPOSED = "queue_exposed"
     UNKNOWN_SERVICE_EXPOSED = "unknown_service_exposed"
 
 

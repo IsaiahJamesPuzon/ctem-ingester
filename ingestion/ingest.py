@@ -31,6 +31,7 @@ def main():
     parser.add_argument('--office-id', required=True, help='Office identifier')
     parser.add_argument('--scanner-id', required=True, help='Scanner identifier')
     parser.add_argument('--scanner-type', default='nmap', help='Scanner type (default: nmap)')
+    parser.add_argument('--scan-run-id', default=None, help='Scan run identifier (default: derived from filename)')
     parser.add_argument('--json', action='store_true', help='Output JSON format')
     parser.add_argument('--init-db', action='store_true', help='Force database initialization (optional, auto-detects by default)')
     
@@ -53,12 +54,19 @@ def main():
         if not transformer:
             raise ValueError(f"Unsupported scanner type: {args.scanner_type}")
         
+        # Determine scan_run_id (use filename if not provided)
+        scan_run_id = args.scan_run_id
+        if not scan_run_id:
+            # Use filename (without extension) as scan_run_id
+            scan_run_id = file_path.stem
+        
         # Transform file to events
         start_time = datetime.now()
         events = transformer.transform(
             file_path=file_path,
             office_id=args.office_id,
-            scanner_id=args.scanner_id
+            scanner_id=args.scanner_id,
+            scan_run_id=scan_run_id
         )
         
         # Ingest to database
