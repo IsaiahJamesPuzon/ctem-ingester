@@ -714,6 +714,22 @@ class NucleiTransformer(BaseTransformer):
         if any(keyword in tags_lower for keyword in ['exposure', 'disclosure', 'leak']):
             return ExposureClass.HTTP_CONTENT_LEAK
         
+        # Message queues (from tags)
+        if any(keyword in tags_lower for keyword in ['kafka', 'rabbitmq', 'activemq', 'amqp', 'queue']):
+            return ExposureClass.QUEUE_EXPOSED
+        
+        # Cache services (from tags)
+        if any(keyword in tags_lower for keyword in ['memcached', 'redis-cache', 'varnish', 'cache']):
+            return ExposureClass.CACHE_EXPOSED
+        
+        # Monitoring services (from tags)
+        if any(keyword in tags_lower for keyword in ['prometheus', 'grafana', 'kibana', 'monitoring', 'metrics']):
+            return ExposureClass.MONITORING_EXPOSED
+        
+        # Media streaming (from tags)
+        if any(keyword in tags_lower for keyword in ['rtsp', 'streaming', 'media']):
+            return ExposureClass.MEDIA_STREAMING_EXPOSED
+        
         # Priority 2: Enrichment service names (reliable, from nmap)
         # These help align nuclei with nmap when enrichment is available
         
@@ -921,16 +937,21 @@ class NucleiTransformer(BaseTransformer):
         base_severity = severity_map.get(nuclei_severity.lower(), 30)
         
         # Adjust based on exposure class if it's more severe
+        # Severity map aligned with nmap_transformer for consistency
         class_severity_map = {
             ExposureClass.DB_EXPOSED: 90,
             ExposureClass.CONTAINER_API_EXPOSED: 85,
+            ExposureClass.CACHE_EXPOSED: 75,  # Can lead to data leaks or DoS
+            ExposureClass.QUEUE_EXPOSED: 70,  # Message queues can expose sensitive data
             ExposureClass.REMOTE_ADMIN_EXPOSED: 70,
             ExposureClass.FILESHARE_EXPOSED: 65,
             ExposureClass.DEBUG_PORT_EXPOSED: 60,
             ExposureClass.VCS_PROTOCOL_EXPOSED: 55,
             ExposureClass.HTTP_CONTENT_LEAK: 50,
-            ExposureClass.SERVICE_ADVERTISED_MDNS: 40,
+            ExposureClass.MONITORING_EXPOSED: 45,  # Can leak infrastructure info
             ExposureClass.EGRESS_TUNNEL_INDICATOR: 45,
+            ExposureClass.SERVICE_ADVERTISED_MDNS: 40,
+            ExposureClass.MEDIA_STREAMING_EXPOSED: 35,  # Generally lower risk
             ExposureClass.UNKNOWN_SERVICE_EXPOSED: 30,
         }
         
