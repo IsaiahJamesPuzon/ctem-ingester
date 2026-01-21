@@ -991,8 +991,8 @@ class NmapTransformer(BaseTransformer):
         severity_map = {
             ExposureClass.DB_EXPOSED: 90,
             ExposureClass.CONTAINER_API_EXPOSED: 85,
+            ExposureClass.QUEUE_EXPOSED: 80,  # Message queues can expose sensitive data
             ExposureClass.CACHE_EXPOSED: 75,  # Can lead to data leaks or DoS
-            ExposureClass.QUEUE_EXPOSED: 70,  # Message queues can expose sensitive data
             ExposureClass.REMOTE_ADMIN_EXPOSED: 70,
             ExposureClass.FILESHARE_EXPOSED: 65,
             ExposureClass.DEBUG_PORT_EXPOSED: 60,
