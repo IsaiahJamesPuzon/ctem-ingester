@@ -231,6 +231,13 @@ class NucleiTransformer(BaseTransformer):
             host = finding.get('host', '')
             matched_at = finding.get('matched-at', host)
             
+            # Direct IP field from nuclei output (most reliable source)
+            direct_ip = finding.get('ip')
+            
+            # Try to get port from _service enrichment if available
+            service_info = finding.get('_service', {})
+            direct_port = service_info.get('port') if isinstance(service_info, dict) else None
+            
             # Extract info fields
             name = info.get('name', template_id)
             severity = info.get('severity', 'info')
@@ -248,10 +255,15 @@ class NucleiTransformer(BaseTransformer):
             else:
                 finding_timestamp = scan_timestamp
             
-            # Parse host information
-            host_info = self._extract_host_info(host)
+            # Parse host information - prioritize direct_ip, then matched-at, then host
+            # Use matched_at for URL parsing (contains port), but prefer direct_ip for IP
+            host_info = self._extract_host_info(
+                matched_at or host, 
+                direct_ip=direct_ip,
+                direct_port=direct_port
+            )
             if not host_info.get('ip'):
-                logger.warning(f"Could not extract IP from host: {host}")
+                logger.warning(f"Could not extract IP from host: {host}, matched-at: {matched_at}, direct_ip: {direct_ip}")
                 return None
             
             # Extract enrichment metadata if available (from nmap2nuclei.py)
@@ -546,62 +558,105 @@ class NucleiTransformer(BaseTransformer):
             print(f"Error creating event for finding {finding.get('template-id', 'unknown')}: {e}")
             return None
     
-    def _extract_host_info(self, host_url: str) -> Dict[str, Any]:
+    def _extract_host_info(self, host_url: str, direct_ip: str = None, direct_port: int = None) -> Dict[str, Any]:
         """
-        Extract IP, port, hostname, and protocol from host URL.
+        Extract IP, port, hostname, and protocol from host URL or direct values.
         
         Args:
             host_url: URL string (e.g., "http://10.0.2.131:80", "tcp://192.168.1.5:3306")
+                      or bare IP:port (e.g., "10.0.4.68:7000")
+            direct_ip: Optional direct IP from finding (takes precedence)
+            direct_port: Optional direct port from finding
         
         Returns:
             Dict with keys: ip, port, hostname, protocol
         """
         host_info = {}
         
+        # Use direct IP if provided (most reliable)
+        if direct_ip and self._is_ip_address(direct_ip):
+            host_info['ip'] = direct_ip
+            if direct_port:
+                host_info['port'] = direct_port
+        
         try:
-            parsed = urlparse(host_url)
+            # Handle bare IP:port format (e.g., "10.0.4.68:7000")
+            if host_url and '://' not in host_url:
+                # Check if it's IP:port format
+                if ':' in host_url:
+                    parts = host_url.rsplit(':', 1)
+                    if len(parts) == 2:
+                        potential_ip = parts[0]
+                        potential_port = parts[1]
+                        if self._is_ip_address(potential_ip):
+                            if 'ip' not in host_info:
+                                host_info['ip'] = potential_ip
+                            if 'port' not in host_info:
+                                try:
+                                    host_info['port'] = int(potential_port)
+                                except ValueError:
+                                    pass
+                            host_info['protocol'] = 'unknown'
+                            return host_info
+                # Check if it's just an IP
+                elif self._is_ip_address(host_url):
+                    if 'ip' not in host_info:
+                        host_info['ip'] = host_url
+                    host_info['protocol'] = 'unknown'
+                    return host_info
             
-            # Extract protocol
-            host_info['protocol'] = parsed.scheme or 'unknown'
-            
-            # Extract hostname (could be IP or domain)
-            hostname = parsed.hostname or parsed.netloc.split(':')[0]
-            
-            # Check if hostname is an IP address
-            if self._is_ip_address(hostname):
-                host_info['ip'] = hostname
-            else:
-                host_info['hostname'] = hostname
-                # If not an IP, we still need an IP for asset.id
-                # Use hostname as fallback
-                host_info['ip'] = hostname
-            
-            # Extract port
-            if parsed.port:
-                host_info['port'] = parsed.port
-            else:
-                # Default ports based on protocol
-                default_ports = {
-                    'http': 80,
-                    'https': 443,
-                    'ftp': 21,
-                    'ssh': 22,
-                    'telnet': 23,
-                    'smtp': 25,
-                    'dns': 53,
-                }
-                host_info['port'] = default_ports.get(parsed.scheme)
+            # Standard URL parsing for URLs with schemes
+            if host_url:
+                parsed = urlparse(host_url)
+                
+                # Extract protocol
+                if 'protocol' not in host_info:
+                    host_info['protocol'] = parsed.scheme or 'unknown'
+                
+                # Extract hostname (could be IP or domain)
+                hostname = parsed.hostname or (parsed.netloc.split(':')[0] if parsed.netloc else '')
+                
+                # Check if hostname is an IP address
+                if hostname and self._is_ip_address(hostname):
+                    if 'ip' not in host_info:
+                        host_info['ip'] = hostname
+                elif hostname:
+                    host_info['hostname'] = hostname
+                    # If not an IP, we still need an IP for asset.id
+                    if 'ip' not in host_info:
+                        host_info['ip'] = hostname
+                
+                # Extract port
+                if 'port' not in host_info:
+                    if parsed.port:
+                        host_info['port'] = parsed.port
+                    else:
+                        # Default ports based on protocol
+                        default_ports = {
+                            'http': 80,
+                            'https': 443,
+                            'ftp': 21,
+                            'ssh': 22,
+                            'telnet': 23,
+                            'smtp': 25,
+                            'dns': 53,
+                        }
+                        port = default_ports.get(parsed.scheme)
+                        if port:
+                            host_info['port'] = port
             
         except Exception as e:
-            print(f"Warning: Failed to parse host URL '{host_url}': {e}")
+            logger.warning(f"Failed to parse host URL '{host_url}': {e}")
             # Try simple regex as fallback
-            ip_match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', host_url)
-            if ip_match:
-                host_info['ip'] = ip_match.group(1)
+            if 'ip' not in host_info:
+                ip_match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', host_url or '')
+                if ip_match:
+                    host_info['ip'] = ip_match.group(1)
             
-            port_match = re.search(r':(\d+)', host_url)
-            if port_match:
-                host_info['port'] = int(port_match.group(1))
+            if 'port' not in host_info:
+                port_match = re.search(r':(\d+)', host_url or '')
+                if port_match:
+                    host_info['port'] = int(port_match.group(1))
         
         return host_info
     
