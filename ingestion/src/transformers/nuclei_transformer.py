@@ -20,6 +20,11 @@ from src.models.canonical import (
 )
 from src.transformers.base import BaseTransformer, TransformerError
 from src.utils.id_generation import generate_asset_id, generate_event_id, generate_exposure_id, generate_dedupe_key
+from src.utils.scoring import (
+    calculate_severity_with_nuclei,
+    calculate_risk_score,
+    calculate_confidence
+)
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -334,8 +339,8 @@ class NucleiTransformer(BaseTransformer):
                 port=port_num
             )
             
-            # Calculate severity score
-            severity_score = self._calculate_severity(severity, exposure_class)
+            # Calculate severity score using shared scoring
+            severity_score = calculate_severity_with_nuclei(severity, exposure_class)
             
             # Extract service information
             extracted_results = finding.get('extracted-results', [])
@@ -450,20 +455,49 @@ class NucleiTransformer(BaseTransformer):
                         # If not a valid enum value, skip
                         pass
             
-            # Create exposure
+            # Calculate or use enriched risk_score
+            # Use enrichment value if available (from nmap2nuclei.py), otherwise calculate
+            if enrichment.get('risk_score') is not None:
+                risk_score = float(enrichment['risk_score'])
+            else:
+                risk_score = calculate_risk_score(
+                    severity=severity_score,
+                    exposure_class=exposure_class,
+                    bind_scope=bind_scope,
+                    data_classifications=data_class,
+                    asset_ip=host_info['ip']
+                )
+            
+            # Calculate or use enriched confidence
+            # Use enrichment value if available (from nmap2nuclei.py), otherwise calculate
+            if enrichment.get('confidence') is not None:
+                confidence = float(enrichment['confidence'])
+            else:
+                confidence = calculate_confidence(
+                    service_name=service_name,
+                    port=port_num,
+                    service_product=service_product,
+                    service_version=service_version,
+                    nuclei_severity=severity,
+                    has_mac=bool(mac_address),
+                    has_hostname=bool(hostname)
+                )
+            
+            # Create exposure with confidence
             exposure = Exposure(
                 id=exposure_id,
                 class_=exposure_class,
                 status=ExposureStatus.OPEN,
                 vector=vector,
                 service=service,
-                resource=resource,  # Now populated!
-                data_class=data_class,  # Now populated!
+                resource=resource,
+                data_class=data_class,
+                confidence=confidence,  # Now populated!
                 first_seen=finding_timestamp,
                 last_seen=finding_timestamp
             )
             
-            # Create event
+            # Create event with risk_score
             event = Event(
                 id=event_id,
                 kind=EventKind.EVENT,
@@ -471,10 +505,11 @@ class NucleiTransformer(BaseTransformer):
                 type=['info'],
                 action=EventAction.EXPOSURE_OPENED,
                 severity=severity_score,
+                risk_score=risk_score,  # Now populated!
                 correlation=EventCorrelation(
-                dedupe_key=dedupe_key,
-                scan_run_id=scan_run_id
-            )
+                    dedupe_key=dedupe_key,
+                    scan_run_id=scan_run_id
+                )
             )
             
             # Create office
@@ -909,53 +944,3 @@ class NucleiTransformer(BaseTransformer):
         except (ValueError, IndexError):
             return False
     
-    def _calculate_severity(
-        self,
-        nuclei_severity: str,
-        exposure_class: ExposureClass
-    ) -> int:
-        """
-        Calculate severity score (0-100) based on nuclei severity and exposure class.
-        
-        Args:
-            nuclei_severity: Nuclei severity level (critical, high, medium, low, info)
-            exposure_class: Classified exposure class
-        
-        Returns:
-            Severity score (0-100)
-        """
-        # Base severity from nuclei
-        severity_map = {
-            'critical': 95,
-            'high': 80,
-            'medium': 60,
-            'low': 40,
-            'info': 20,
-            'unknown': 30
-        }
-        
-        base_severity = severity_map.get(nuclei_severity.lower(), 30)
-        
-        # Adjust based on exposure class if it's more severe
-        # Severity map aligned with nmap_transformer for consistency
-        class_severity_map = {
-            ExposureClass.DB_EXPOSED: 90,
-            ExposureClass.CONTAINER_API_EXPOSED: 85,
-            ExposureClass.QUEUE_EXPOSED: 80,  # Message queues can expose sensitive data
-            ExposureClass.CACHE_EXPOSED: 75,  # Can lead to data leaks or DoS
-            ExposureClass.REMOTE_ADMIN_EXPOSED: 70,
-            ExposureClass.FILESHARE_EXPOSED: 65,
-            ExposureClass.DEBUG_PORT_EXPOSED: 60,
-            ExposureClass.VCS_PROTOCOL_EXPOSED: 55,
-            ExposureClass.HTTP_CONTENT_LEAK: 50,
-            ExposureClass.MONITORING_EXPOSED: 45,  # Can leak infrastructure info
-            ExposureClass.EGRESS_TUNNEL_INDICATOR: 45,
-            ExposureClass.SERVICE_ADVERTISED_MDNS: 40,
-            ExposureClass.MEDIA_STREAMING_EXPOSED: 35,  # Generally lower risk
-            ExposureClass.UNKNOWN_SERVICE_EXPOSED: 30,
-        }
-        
-        class_severity = class_severity_map.get(exposure_class, 30)
-        
-        # Use the higher of the two
-        return max(base_severity, class_severity)
