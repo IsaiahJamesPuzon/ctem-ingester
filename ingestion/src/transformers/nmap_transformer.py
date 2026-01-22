@@ -24,6 +24,11 @@ from src.models.canonical import (
 from src.transformers.base import BaseTransformer, TransformerError
 from src.utils.security import parse_xml_safely
 from src.utils.id_generation import generate_asset_id, generate_event_id, generate_exposure_id, generate_dedupe_key
+from src.utils.scoring import (
+    calculate_severity_from_class,
+    calculate_risk_score,
+    calculate_confidence
+)
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -604,8 +609,8 @@ class NmapTransformer(BaseTransformer):
         if data_classifications:
             logger.debug(f"Data classifications for {asset.ip[0]}:{port_num}: {[dc.value for dc in data_classifications]}")
         
-        # Determine severity based on exposure class
-        severity = self._calculate_severity(exposure_class, service_name, service_product)
+        # Determine severity based on exposure class (using shared scoring)
+        severity = calculate_severity_from_class(exposure_class, service_product)
         
         # Generate IDs
         exposure_id = generate_exposure_id(
@@ -666,20 +671,40 @@ class NmapTransformer(BaseTransformer):
                 identifier=f"{asset.ip[0]}:{port_num}"
             )
         
-        # Create exposure with data classifications
+        # Calculate risk_score using shared scoring
+        risk_score = calculate_risk_score(
+            severity=severity,
+            exposure_class=exposure_class,
+            bind_scope=bind_scope,
+            data_classifications=list(data_classifications) if data_classifications else None,
+            asset_ip=asset.ip[0]
+        )
+        
+        # Calculate confidence using shared scoring
+        confidence = calculate_confidence(
+            service_name=service_name,
+            port=port_num,
+            service_product=service_product,
+            service_version=service_version,
+            has_mac=bool(asset.mac),
+            has_hostname=bool(asset.hostname)
+        )
+        
+        # Create exposure with data classifications and confidence
         exposure = Exposure(
             id=exposure_id,
             class_=exposure_class,
             status=ExposureStatus.OPEN,
             vector=vector,
             service=service,
-            resource=resource,  # Enhanced: include resource type
-            data_class=list(data_classifications) if data_classifications else None,  # Enhanced: data classifications
+            resource=resource,
+            data_class=list(data_classifications) if data_classifications else None,
+            confidence=confidence,  # Now populated!
             first_seen=scan_timestamp,
             last_seen=scan_timestamp
         )
         
-        # Create event
+        # Create event with risk_score
         event = Event(
             id=event_id,
             kind=EventKind.EVENT,
@@ -687,6 +712,7 @@ class NmapTransformer(BaseTransformer):
             type=['info'],
             action=EventAction.EXPOSURE_OPENED,
             severity=severity,
+            risk_score=risk_score,  # Now populated!
             correlation=EventCorrelation(
                 dedupe_key=dedupe_key,
                 scan_run_id=scan_run_id
@@ -973,44 +999,3 @@ class NmapTransformer(BaseTransformer):
         # Default: unknown service
         return ExposureClass.UNKNOWN_SERVICE_EXPOSED
     
-    def _calculate_severity(
-        self,
-        exposure_class: ExposureClass,
-        service_name: str,
-        product: Optional[str]
-    ) -> int:
-        """
-        Calculate severity score (0-100) based on exposure class and context.
-        
-        Severity levels:
-        - Critical (80-100): Databases, container APIs, unauthenticated admin
-        - High (60-79): Remote admin, file shares
-        - Medium (40-59): Debug ports, HTTP services
-        - Low (20-39): Unknown services
-        """
-        severity_map = {
-            ExposureClass.DB_EXPOSED: 90,
-            ExposureClass.CONTAINER_API_EXPOSED: 85,
-            ExposureClass.QUEUE_EXPOSED: 80,  # Message queues can expose sensitive data
-            ExposureClass.CACHE_EXPOSED: 75,  # Can lead to data leaks or DoS
-            ExposureClass.REMOTE_ADMIN_EXPOSED: 70,
-            ExposureClass.FILESHARE_EXPOSED: 65,
-            ExposureClass.DEBUG_PORT_EXPOSED: 60,
-            ExposureClass.VCS_PROTOCOL_EXPOSED: 55,
-            ExposureClass.HTTP_CONTENT_LEAK: 50,
-            ExposureClass.MONITORING_EXPOSED: 45,  # Can leak infrastructure info
-            ExposureClass.EGRESS_TUNNEL_INDICATOR: 45,
-            ExposureClass.SERVICE_ADVERTISED_MDNS: 40,
-            ExposureClass.MEDIA_STREAMING_EXPOSED: 35,  # Generally lower risk
-            ExposureClass.UNKNOWN_SERVICE_EXPOSED: 30,
-        }
-        
-        base_severity = severity_map.get(exposure_class, 30)
-        
-        # Adjust for specific high-risk products
-        if product:
-            product_lower = product.lower()
-            if any(keyword in product_lower for keyword in ['docker', 'kubernetes', 'jenkins']):
-                base_severity = min(base_severity + 10, 100)
-        
-        return base_severity
